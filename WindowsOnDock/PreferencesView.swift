@@ -9,17 +9,34 @@ struct PreferencesView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            // Header
+            // Launch at Login toggle
             HStack {
-                Text("Supported Applications")
-                    .font(.title2)
-                    .fontWeight(.bold)
-
-                Spacer()
+                Toggle(isOn: $preferences.launchAtLogin) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Launch at Login")
+                            .font(.body)
+                            .fontWeight(.medium)
+                        Text("Start WindowsOnDock when you log in")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                }
+                .toggleStyle(.switch)
             }
             .padding()
 
             Divider()
+
+            // Header
+            HStack {
+                Text("Supported Applications")
+                    .font(.headline)
+
+                Spacer()
+            }
+            .padding(.horizontal)
+            .padding(.top, 12)
+            .padding(.bottom, 4)
 
             // App list with checkboxes
             ScrollView {

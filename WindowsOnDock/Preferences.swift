@@ -1,10 +1,12 @@
 import Foundation
 import SwiftUI
+import ServiceManagement
 
 class Preferences: ObservableObject {
     static let shared = Preferences()
 
     private let enabledAppsKey = "enabledApps"
+    private let launchAtLoginKey = "launchAtLogin"
 
     // All available apps with their bundle ID patterns
     static let availableApps: [String: [String]] = [
@@ -27,7 +29,13 @@ class Preferences: ObservableObject {
 
     @Published var enabledApps: Set<String> {
         didSet {
-            save()
+            saveEnabledApps()
+        }
+    }
+
+    @Published var launchAtLogin: Bool {
+        didSet {
+            setLaunchAtLogin(launchAtLogin)
         }
     }
 
@@ -37,10 +45,25 @@ class Preferences: ObservableObject {
         } else {
             enabledApps = Self.defaultEnabledApps
         }
+
+        // Check current login item status
+        launchAtLogin = SMAppService.mainApp.status == .enabled
     }
 
-    private func save() {
+    private func saveEnabledApps() {
         UserDefaults.standard.set(Array(enabledApps), forKey: enabledAppsKey)
+    }
+
+    private func setLaunchAtLogin(_ enabled: Bool) {
+        do {
+            if enabled {
+                try SMAppService.mainApp.register()
+            } else {
+                try SMAppService.mainApp.unregister()
+            }
+        } catch {
+            print("Failed to \(enabled ? "enable" : "disable") launch at login: \(error)")
+        }
     }
 
     func isAppSupported(bundleId: String) -> Bool {
