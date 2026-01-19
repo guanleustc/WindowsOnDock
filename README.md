@@ -110,7 +110,7 @@ The icon, code architecture, UI, and even this README were created through AI-hu
 
 Since macOS has no public API for adding arbitrary dock items, WindowsOnDock creates minimal `.app` bundles that appear as real applications:
 
-1. **Monitor** - Scans for application windows every 2 seconds using the Accessibility API
+1. **Monitor** - Scans for application windows using the Accessibility API (only when the management window is open)
 2. **Create** - Generates helper apps in `~/Library/Application Support/WindowsOnDock/Helpers/`
 3. **Register** - Adds helpers to dock using `defaults write com.apple.dock`
 4. **Activate** - When clicked, helpers use AppleScript to raise their target window

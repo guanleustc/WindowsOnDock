@@ -119,6 +119,9 @@ struct ContentView: View {
         .onAppear {
             startMonitoring()
         }
+        .onDisappear {
+            stopMonitoring()
+        }
         .background(
             Button("") {
                 selectAllWindows()
@@ -143,6 +146,10 @@ struct ContentView: View {
                 }
             }
         }
+    }
+
+    func stopMonitoring() {
+        windowManager.stopMonitoring()
     }
 
     func refreshWindows() {

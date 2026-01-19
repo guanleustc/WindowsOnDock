@@ -58,11 +58,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         statusItem?.menu = menu
         windowManager = WindowManager()
-        startMonitoring()
-    }
-
-    func startMonitoring() {
-        windowManager?.startMonitoring { _ in }
     }
 
     @objc func openManagement() {
