@@ -63,6 +63,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     @objc func openManagement() {
         if managementWindowController == nil {
             managementWindowController = ManagementWindowController()
+            managementWindowController?.onClose = { [weak self] in
+                self?.managementWindowController = nil
+            }
         }
         managementWindowController?.showWindow(nil)
         managementWindowController?.window?.makeKeyAndOrderFront(nil)
