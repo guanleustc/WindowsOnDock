@@ -6,6 +6,8 @@ class HelperAppManager: ObservableObject {
 
     private let helpersDirectory: URL
     @Published private var helperApps: Set<String> = []
+    // Maps helper app name to (bundleId, windowNumber, projectName) for matching
+    private var helperInfo: [String: (bundleId: String, windowNumber: Int, projectName: String)] = [:]
 
     init() {
         let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
@@ -20,12 +22,27 @@ class HelperAppManager: ObservableObject {
 
     private func loadExistingHelpers() {
         helperApps.removeAll()
+        helperInfo.removeAll()
+
         guard let contents = try? FileManager.default.contentsOfDirectory(at: helpersDirectory, includingPropertiesForKeys: nil) else {
             return
         }
 
         for url in contents where url.pathExtension == "app" {
-            helperApps.insert(url.lastPathComponent)
+            let appName = url.lastPathComponent
+            helperApps.insert(appName)
+
+            // Read the bundle ID, window number, and project name from Info.plist
+            let infoPlistURL = url.appendingPathComponent("Contents/Info.plist")
+            if let plistData = FileManager.default.contents(atPath: infoPlistURL.path),
+               let plist = try? PropertyListSerialization.propertyList(from: plistData, format: nil) as? [String: Any] {
+                let bundleId = plist["WDOriginalBundleId"] as? String ?? ""
+                let windowNumber = plist["WDWindowNumber"] as? Int ?? 0
+                let projectName = plist["WDProjectName"] as? String ?? ""
+                if !bundleId.isEmpty {
+                    helperInfo[appName] = (bundleId: bundleId, windowNumber: windowNumber, projectName: projectName)
+                }
+            }
         }
     }
 
@@ -39,8 +56,72 @@ class HelperAppManager: ObservableObject {
     }
 
     func hasHelper(for window: WindowInfo) -> Bool {
+        // First try exact match by sanitized name
         let helperName = sanitizedHelperName(for: window)
-        return helperApps.contains(helperName + ".app")
+        if helperApps.contains(helperName + ".app") {
+            return true
+        }
+
+        // Then try matching by window title similarity
+        return findMatchingHelper(for: window) != nil
+    }
+
+    /// Check if an app uses dynamic window titles (file name changes in title)
+    private func usesDynamicWindowTitles(bundleId: String) -> Bool {
+        let lowerBundleId = bundleId.lowercased()
+        // VSCode and similar editors where file name is part of the title
+        return lowerBundleId.contains("vscode") || lowerBundleId.contains("code") ||
+               lowerBundleId.contains("cursor")
+    }
+
+    /// Extract project name from window title for apps with dynamic titles
+    /// VSCode: "filename.js - projectName - Visual Studio Code" -> "projectName"
+    private func extractProjectName(from title: String, bundleId: String) -> String {
+        let lowerBundleId = bundleId.lowercased()
+
+        // VSCode style: "file.js - project - Visual Studio Code"
+        if lowerBundleId.contains("vscode") || lowerBundleId.contains("code") || lowerBundleId.contains("cursor") {
+            let parts = title.components(separatedBy: " - ")
+            if parts.count >= 3 {
+                // Project is second-to-last part
+                return parts[parts.count - 2].trimmingCharacters(in: .whitespaces)
+            } else if parts.count == 2 {
+                // Might be "project - Visual Studio Code" without filename
+                return parts[0].trimmingCharacters(in: .whitespaces)
+            }
+        }
+
+        // For other apps, return the full title
+        return title
+    }
+
+    /// Find a helper that matches this window based on bundle ID and window number
+    /// Falls back to project name matching for VSCode-like apps if window number doesn't match
+    private func findMatchingHelper(for window: WindowInfo) -> String? {
+        guard let bundleId = window.appBundleIdentifier else { return nil }
+
+        // First pass: try to match by window number (most reliable within a session)
+        for (appName, info) in helperInfo {
+            if info.bundleId.lowercased() == bundleId.lowercased() &&
+               info.windowNumber == window.windowNumber && info.windowNumber != 0 {
+                return appName
+            }
+        }
+
+        // Second pass: for apps with dynamic titles, fall back to project name matching
+        // (useful after app restart when window numbers change)
+        if usesDynamicWindowTitles(bundleId: bundleId) {
+            let currentProjectName = extractProjectName(from: window.windowTitle, bundleId: bundleId).lowercased()
+
+            for (appName, info) in helperInfo {
+                if info.bundleId.lowercased() == bundleId.lowercased() &&
+                   info.projectName.lowercased() == currentProjectName {
+                    return appName
+                }
+            }
+        }
+
+        return nil
     }
 
     func createHelper(for window: WindowInfo) throws {
@@ -58,7 +139,8 @@ class HelperAppManager: ObservableObject {
         try FileManager.default.createDirectory(at: macOSURL, withIntermediateDirectories: true)
         try FileManager.default.createDirectory(at: resourcesURL, withIntermediateDirectories: true)
 
-        let infoPlist = createInfoPlist(helperName: helperName, windowTitle: window.windowTitle)
+        let projectName = extractProjectName(from: window.windowTitle, bundleId: bundleId)
+        let infoPlist = createInfoPlist(helperName: helperName, windowTitle: window.windowTitle, originalBundleId: bundleId, windowNumber: window.windowNumber, projectName: projectName)
         let infoPlistURL = contentsURL.appendingPathComponent("Info.plist")
         try infoPlist.write(to: infoPlistURL)
 
@@ -75,6 +157,7 @@ class HelperAppManager: ObservableObject {
         }
 
         helperApps.insert(helperName + ".app")
+        helperInfo[helperName + ".app"] = (bundleId: bundleId, windowNumber: window.windowNumber, projectName: projectName)
         addToDock(helperURL)
     }
 
@@ -86,6 +169,7 @@ class HelperAppManager: ObservableObject {
         removeFromDock(helperURL)
         try? FileManager.default.removeItem(at: helperURL)
         helperApps.remove(helperFileName)
+        helperInfo.removeValue(forKey: helperFileName)
     }
 
     func removeAllHelpers() {
@@ -101,6 +185,7 @@ class HelperAppManager: ObservableObject {
         }
 
         helperApps.removeAll()
+        helperInfo.removeAll()
         restartDock()
     }
 
@@ -170,20 +255,29 @@ class HelperAppManager: ObservableObject {
         return "WD_\(sanitized)"
     }
 
-    private func createInfoPlist(helperName: String, windowTitle: String) -> Data {
+    private func createInfoPlist(helperName: String, windowTitle: String, originalBundleId: String, windowNumber: Int, projectName: String) -> Data {
+        // Escape XML special characters
+        let escapeXML: (String) -> String = { str in
+            str.replacingOccurrences(of: "&", with: "&amp;")
+               .replacingOccurrences(of: "<", with: "&lt;")
+               .replacingOccurrences(of: ">", with: "&gt;")
+               .replacingOccurrences(of: "\"", with: "&quot;")
+               .replacingOccurrences(of: "'", with: "&apos;")
+        }
+
         let plist = """
         <?xml version="1.0" encoding="UTF-8"?>
         <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
         <plist version="1.0">
         <dict>
             <key>CFBundleExecutable</key>
-            <string>\(helperName)</string>
+            <string>\(escapeXML(helperName))</string>
             <key>CFBundleIdentifier</key>
-            <string>com.windowsondock.helper.\(helperName)</string>
+            <string>com.windowsondock.helper.\(escapeXML(helperName))</string>
             <key>CFBundleName</key>
-            <string>\(windowTitle)</string>
+            <string>\(escapeXML(windowTitle))</string>
             <key>CFBundleDisplayName</key>
-            <string>\(windowTitle)</string>
+            <string>\(escapeXML(windowTitle))</string>
             <key>CFBundlePackageType</key>
             <string>APPL</string>
             <key>CFBundleShortVersionString</key>
@@ -196,6 +290,12 @@ class HelperAppManager: ObservableObject {
             <false/>
             <key>NSHighResolutionCapable</key>
             <true/>
+            <key>WDOriginalBundleId</key>
+            <string>\(escapeXML(originalBundleId))</string>
+            <key>WDWindowNumber</key>
+            <integer>\(windowNumber)</integer>
+            <key>WDProjectName</key>
+            <string>\(escapeXML(projectName))</string>
         </dict>
         </plist>
         """
